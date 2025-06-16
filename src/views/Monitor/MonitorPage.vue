@@ -5,10 +5,7 @@
 
         <!-- Main Content -->
         <div class="flex fullscreen">
-            <!-- Left: Ticket List -->
-            <TicketList :tickets="tickets"/>
-
-            <!-- Right: Current Ticket -->
+            <TicketList :tickets="tickets" />
             <CurrentTicket :current="tickets" />
         </div>
 
@@ -80,6 +77,65 @@ export default defineComponent({
             }
         };
 
+        let ws: WebSocket | null = null;
+        const connectWebSocket = () => {
+            ws = new WebSocket('ws://localhost:8080');
+
+            console.log("ws", ws);
+
+
+            ws.onopen = () => {
+                console.log('[WS] Terkoneksi ke WebSocket server');
+            };
+
+
+            ws.onmessage = (event) => {
+                try {
+                    const { event: evt, message, data } = JSON.parse(event.data);
+                    console.log('[WS] Pesan diterima:', evt, message, data);
+                    console.log(message, data.evt);
+                    if (evt === 'NEW') {
+                        const newTicket = {
+                            id: data.id,
+                            ticketNumber: data.ticket_number,
+                            serviceId: data.service_id,
+                            serviceName: data.service_name || '-',
+                            name: data.name,
+                            phone: data.phone || '',
+                            email: data.email || '',
+                            priority: data.priority,
+                            notes: data.notes || '',
+                            status: data.status,
+                            createdAt: data.created_at || new Date().toISOString(),
+                        };
+
+                        // Update tiket kalau udah ada, atau tambah baru
+                        const existingIndex = tickets.value.findIndex(t => t.id === newTicket.id);
+                        if (existingIndex !== -1) {
+                            tickets.value[existingIndex] = newTicket;
+                            if (currentTicket.value?.id === newTicket.id) {
+                                currentTicket.value = newTicket;
+                            }
+                        } else {
+                            tickets.value.push(newTicket);
+                        }
+                        console.log('[WS] Tiket diperbarui/ditambahkan:', newTicket);
+                    }
+                } catch (error: any) {
+                    console.error('[WS] Error parsing pesan:', error.message);
+                }
+            };
+
+            ws.onclose = () => {
+                console.log('[WS] Koneksi terputus, reconnect dalam 5 detik...');
+                setTimeout(connectWebSocket, 5000);
+            };
+
+            ws.onerror = (error) => {
+                console.error('[WS] Error:', error);
+            };
+        };
+
         const startProcessing = (ticketId: number) => {
             const ticket = tickets.value.find(t => t.id === ticketId);
             if (ticket) {
@@ -95,25 +151,6 @@ export default defineComponent({
                 currentTicket.value = null;
                 tickets.value = tickets.value.filter(t => t.id !== ticketId);
             }
-        };
-
-        // 📡 Listen to Supabase Realtime
-        const initRealtimeListener = () => {
-            supabase
-                .channel('ticket-channel')
-                .on(
-                    'postgres_changes',
-                    {
-                        event: '*',
-                        schema: 'public',
-                        table: 'ticket',
-                    },
-                    async payload => {
-                        console.log('🟢 Change detected in tickets:', payload);
-                        await fetchTickets();
-                    }
-                )
-                .subscribe();
         };
 
         const enterFullscreen = () => {
@@ -134,7 +171,7 @@ export default defineComponent({
 
         onMounted(() => {
             fetchTickets();
-            initRealtimeListener();
+            connectWebSocket();
             enterFullscreen();
 
             document.addEventListener('fullscreenchange', handleFullscreenChange);

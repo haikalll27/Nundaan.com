@@ -12,9 +12,8 @@
                 </p>
 
                 <div class="mt-3 flex justify-end">
-                    <button
-                        class="bg-amber-500 text-white px-4 py-2 rounded hover:bg-amber-600 transition">
-                       {{ ticket.status === 'pending' ? 'To Do' : 'Processing' }}
+                    <button class="bg-amber-500 text-white px-4 py-2 rounded hover:bg-amber-600 transition">
+                        {{ ticket.status === 'pending' ? 'To Do' : 'Processing' }}
                     </button>
                 </div>
             </div>
@@ -38,7 +37,9 @@ export default defineComponent({
     },
     setup(props) {
         const filteredTickets = computed(() =>
-            props.tickets.filter((ticket) => ticket.status === 'pending')
+            props.tickets
+                .filter((ticket) => ticket.status === 'pending')
+                .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
         );
 
         const formatDate = (dateStr: string) => {

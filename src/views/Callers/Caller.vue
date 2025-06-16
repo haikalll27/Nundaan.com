@@ -38,8 +38,8 @@
               {{ column.title }}
               <span class="text-sm text-gray-500 dark:text-gray-400">({{ column.tickets.length }})</span>
             </h4>
-            <draggable v-model="column.tickets" group="tickets" item-key="id" @end="onDragEnd($event, column)"
-              class="space-y-4 min-h-[100px]">
+            <draggable v-model="column.tickets" group="tickets" item-key="id" @change="onDragChange($event, column)"
+              class="space-y-4 min-h-[100px]"> class="space-y-4 min-h-[100px]">
               <template #item="{ element: ticket }">
                 <div
                   class="rounded-lg border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-900 animate-fade-in">
@@ -170,9 +170,7 @@ import { triggerPusherEvent } from '@/composables/triggerPusherEvent';
 import draggable from 'vuedraggable';
 import { MagnifyingGlassIcon, PlusIcon, PencilIcon, TrashIcon, CheckCircleIcon, ExclamationCircleIcon } from '@heroicons/vue/24/outline';
 import { supabase } from '@/utils/supabase';
-// import usePusher from '@/composables/usePusher';
 
-// State management
 const currentPageTitle = ref('Kanban Antrian');
 const columns = ref([
   { title: 'To Do', status: 'pending', tickets: [] },
@@ -180,6 +178,7 @@ const columns = ref([
   { title: 'Done', status: 'completed', tickets: [] },
   { title: 'Cancelled', status: 'cancelled', tickets: [] },
 ]);
+const ws = new WebSocket('ws://localhost:8080');
 const services = ref([]);
 const searchQuery = ref('');
 const showModal = ref(false);
@@ -292,7 +291,6 @@ const filteredColumns = computed(() => {
   }));
 });
 
-
 // Modal handlers
 const openAddModal = () => {
   form.value = {
@@ -324,18 +322,61 @@ const closeModal = () => {
   currentTicket.value = null;
 };
 
+// Text-to-speech function
+const speakTicketNumber = (ticketNumber) => {
+  if (!ticketNumber) return;
+
+  const formattedNumber = ticketNumber
+    .split('')
+    .map(digit => {
+      const digits = ['nol', 'satu', 'dua', 'tiga', 'empat', 'lima', 'enam', 'tujuh', 'delapan', 'sembilan'];
+      return digits[parseInt(digit)] || digit;
+    })
+    .join(' ');
+
+  const text = `Nomor Antrian ${formattedNumber}`;
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.lang = 'id-ID';
+  utterance.volume = 1;
+  utterance.rate = 1;
+  utterance.pitch = 1;
+  window.speechSynthesis.speak(utterance);
+};
+
 // Save ticket (Create or Update)
 const saveTicket = async () => {
   if (!form.value.serviceId || !form.value.name) {
+    console.warn('Validasi gagal: serviceId atau name kosong');
     notification.value = { message: 'Harap isi semua field wajib.', type: 'error' };
     setTimeout(() => (notification.value = { message: '', type: '' }), 3000);
     return;
   }
 
   try {
-    if (isEditMode.value && currentTicket.value) {
-      // Update ticket in Supabase
-      const { error } = await supabase
+    console.log('Mulai menyimpan tiket dengan form:', form.value);
+
+    // Cek autentikasi user
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      console.error('User tidak login');
+      throw new Error('User tidak terautentikasi');
+    }
+
+    let ticketNumber;
+
+    if (isEditMode.value) {
+      // Update ticket
+      console.log('Update tiket di Supabase:', {
+        id: form.value.id,
+        service_id: form.value.serviceId,
+        name: form.value.name,
+        phone: form.value.phone || null,
+        email: form.value.email || null,
+        priority: form.value.priority,
+        notes: form.value.notes || null,
+        status: form.value.status,
+      });
+      const { data, error } = await supabase
         .from('ticket')
         .update({
           service_id: form.value.serviceId,
@@ -345,19 +386,29 @@ const saveTicket = async () => {
           priority: form.value.priority,
           notes: form.value.notes || null,
           status: form.value.status,
-          completed_at: form.value.status === 'completed' ? new Date().toISOString() : null,
         })
-        .eq('id', currentTicket.value.id, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          }
-        });
+        .eq('id', form.value.id)
+        .select();
 
-      if (error) throw error;
+      if (error) {
+        console.error('Error update Supabase:', error);
+        throw error;
+      }
+      console.log('Tiket berhasil diupdate:', data);
 
+      ticketNumber = data[0].ticket_number;
       notification.value = { message: 'Antrian berhasil diperbarui.', type: 'success' };
     } else {
-      // Create new ticket in Supabase
+      // Insert new ticket
+      console.log('Insert tiket ke Supabase:', {
+        service_id: form.value.serviceId,
+        name: form.value.name,
+        phone: form.value.phone || null,
+        email: form.value.email || null,
+        priority: form.value.priority,
+        notes: form.value.notes || null,
+        status: form.value.status,
+      });
       const { data, error } = await supabase
         .from('ticket')
         .insert({
@@ -368,33 +419,49 @@ const saveTicket = async () => {
           priority: form.value.priority,
           notes: form.value.notes || null,
           status: form.value.status,
-        }, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        }).select();
+        })
+        .select();
 
-      const { error: errTriger } = await supabase.channel('caller-channel')
-        .send({
-          type: 'broadcast',
-          event: 'new-ticket',
-          data,
-        });
-
-      if (errTriger) {
-        console.error('Send error:', error);
+      if (error) {
+        console.error('Error insert Supabase:', error);
+        throw error;
       }
+      console.log('Tiket berhasil diinsert:', data);
 
-      if (error) throw error;
+      ticketNumber = data[0].ticket_number;
+
+      ws.onopen = () => {
+        console.log('WebSocket connection established');
+        const message = {
+          type: 'NEW_TICKET',
+          data: data[0]
+        };
+        ws.send(JSON.stringify(message));
+        console.log('Data tiket dikirim ke WS server:', message);
+        ws.close();
+      };
+
+      ws.onerror = (error) => {
+        console.error('WebSocket error:', error);
+      };
+
+      ws.onclose = () => {
+        console.log('WebSocket connection closed');
+      };
 
       notification.value = { message: 'Antrian berhasil ditambahkan.', type: 'success' };
     }
 
-    // Refresh tickets
+    // Panggil fungsi text-to-speech dengan nomor antrian
+    speakTicketNumber(ticketNumber);
+
+    // Refresh data
     await fetchTickets();
     setTimeout(() => (notification.value = { message: '', type: '' }), 3000);
     closeModal();
+
   } catch (error) {
+    console.error('Error dalam menyimpan tiket:', error);
     notification.value = { message: `Gagal menyimpan antrian: ${error.message}`, type: 'error' };
     setTimeout(() => (notification.value = { message: '', type: '' }), 3000);
   }
@@ -406,11 +473,7 @@ const deleteTicket = async (ticket, column) => {
     try {
       const { error } = await supabase
         .from('ticket')
-        .delete({}, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          }
-        })
+        .delete()
         .eq('id', ticket.id);
 
       if (error) throw error;
@@ -426,36 +489,89 @@ const deleteTicket = async (ticket, column) => {
   }
 };
 
-// Handle drag-and-drop
-const onDragEnd = async (event, targetColumn) => {
+// Handle drag changes (reorder within column or move between columns)
+const onDragChange = async (event, targetColumn) => {
   try {
-    const ticket = targetColumn.tickets[event.newIndex];
+    // Extract ticket from the event
+    let ticket;
+    if (event.added) {
+      ticket = event.added.element; // Ticket moved to this column
+    } else if (event.moved) {
+      ticket = targetColumn.tickets[event.moved.newIndex]; // Ticket reordered within column
+    } else {
+      return; // Ignore other events (e.g., removed)
+    }
+
     const newStatus = targetColumn.status;
 
-    // Update ticket status in Supabase
-    const { error } = await supabase
+    console.log(`Memindahkan ticket ${ticket.id} ke status ${newStatus}`);
+
+    // 1. Update status in Supabase
+    const { data: updatedTicket, error: supabaseError } = await supabase
       .from('ticket')
       .update({
         status: newStatus,
         completed_at: newStatus === 'completed' ? new Date().toISOString() : null,
       })
-      .eq('id', ticket.id, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        }
-      });
+      .eq('id', ticket.id)
+      .select()
+      .single();
 
-    if (error) throw error;
+    if (supabaseError) throw supabaseError;
 
-    notification.value = { message: 'Antrian berhasil dipindahkan.', type: 'success' };
-    setTimeout(() => (notification.value = { message: '', type: '' }), 3000);
+    console.log('Supabase update berhasil:', updatedTicket);
+
+    // 2. Send notification via WebSocket
+    const ws = new WebSocket('ws://localhost:8080');
+
+    ws.onopen = () => {
+      console.log('WebSocket terbuka untuk update status');
+      const message = {
+        type: 'TICKET_STATUS_UPDATE',
+        data: {
+          ticketId: updatedTicket.id,
+          newStatus: updatedTicket.status,
+          oldStatus: ticket.status,
+          ticketNumber: updatedTicket.ticket_number,
+        },
+      };
+      ws.send(JSON.stringify(message));
+      console.log('Status update dikirim via WS:', message);
+
+      // Close connection after 1 second
+      setTimeout(() => ws.close(), 1000);
+    };
+
+    ws.onerror = (error) => {
+      console.error('WebSocket error:', error);
+    };
+
+    ws.onclose = () => {
+      console.log('WebSocket tertutup setelah update status');
+    };
+
+    // 3. Update UI with notification
+    notification.value = {
+      message: `Antrian ${updatedTicket.ticket_number} dipindahkan ke ${targetColumn.title}`,
+      type: 'success',
+    };
+
+    // Note: No need to refetch here since vuedraggable updates local state,
+    // but we can refetch if WebSocket updates require global sync
   } catch (error) {
-    notification.value = { message: `Gagal memindahkan antrian: ${error.message}`, type: 'error' };
-    setTimeout(() => (notification.value = { message: '', type: '' }), 3000);
-    // Re-fetch to revert any local changes
+    console.error('Error dalam memindahkan tiket:', error);
+    notification.value = {
+      message: `Gagal memindahkan antrian: ${error.message}`,
+      type: 'error',
+    };
+
+    // Re-fetch to restore UI consistency
     await fetchTickets();
+  } finally {
+    setTimeout(() => (notification.value = { message: '', type: '' }), 3000);
   }
 };
+
 
 // Fetch data on component mount
 onMounted(async () => {

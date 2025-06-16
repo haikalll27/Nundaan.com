@@ -1,7 +1,7 @@
 <template>
   <nav class="bg-blue-500 text-white p-4 flex justify-between items-center">
       <div>
-        <img src="https://via.placeholder.com/40" alt="Logo" class="h-10" />
+        <img src="https://dummyimage.com/600x400/000/fff.png" alt="Logo" class="h-10" />
       </div>
     <div class="flex items-center">
       <span class="text-lg font-semibold">{{ currentTime }}</span>

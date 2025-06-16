@@ -9,13 +9,12 @@
                 <p class="text-sm text-gray-500 mt-1">
                     Created: {{ formatDate(ticket.created_at || ticket.createdAt) }}
                 </p>
-                <button type="button"
-                    :disabled="ticket.status === 'completed'" :class="[
-                        'mt-4 text-white px-4 py-2 rounded',
-                        ticket.status === 'completed' ? 'bg-green-500 hover:bg-green-600' : 'bg-blue-500 hover:bg-blue-600',
-                        ticket.status === 'completed' ? 'disabled:bg-green-400' : 'disabled:bg-gray-400',
-                        'disabled:cursor-not-allowed'
-                    ]">
+                <button type="button" :disabled="ticket.status === 'completed'" :class="[
+                    'mt-4 text-white px-4 py-2 rounded',
+                    ticket.status === 'completed' ? 'bg-green-500 hover:bg-green-600' : 'bg-blue-500 hover:bg-blue-600',
+                    ticket.status === 'completed' ? 'disabled:bg-green-400' : 'disabled:bg-gray-400',
+                    'disabled:cursor-not-allowed'
+                ]">
                     {{ ticket.status === 'processing' ? 'In Progress' : 'Completed' }}
                 </button>
             </div>
