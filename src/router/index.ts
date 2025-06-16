@@ -16,10 +16,10 @@ const router = createRouter({
     },
     {
       path: '/dashboard',
-      name: 'Dashbooard',
+      name: 'Dashboard',
       component: () => import('../views/Ecommerce.vue'),
       meta: {
-        title: 'Dashbooard',
+        title: 'Dashboard',
       },
     },
     {
@@ -53,9 +53,30 @@ const router = createRouter({
   ],
 })
 
+// Auth Guard
 router.beforeEach((to, from, next) => {
   document.title = `Vue.js ${to.meta.title} | TailAdmin - Vue.js Tailwind CSS Dashboard Template`
-  next()
+
+  const publicRoutes = ['/', '/dashboard/signin']
+  const isPublic = publicRoutes.includes(to.path)
+
+  const session = localStorage.getItem('sb-nbhsvuqycjizirnusafy-auth-token')
+  let access_token = null
+
+  if (session) {
+    try {
+      const parsed = JSON.parse(session)
+      access_token = parsed.access_token
+    } catch (e) {
+      access_token = null
+    }
+  }
+
+  if (!access_token && !isPublic) {
+    next('/dashboard/signin')
+  } else {
+    next()
+  }
 })
 
 export default router
